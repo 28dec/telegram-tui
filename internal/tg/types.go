@@ -51,6 +51,8 @@ type MediaInfo struct {
 	Size      int64
 	MimeType  string
 	MessageID int
+	Caption   string // optional server-provided caption/description
+	Alt       string // optional sticker alt/emoji text
 }
 
 // ChatMessage is a single message in a chat.

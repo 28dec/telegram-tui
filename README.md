@@ -120,7 +120,6 @@ On first run, log in with phone/code (and 2FA password if enabled).
 - `I` — multiline message
 - `r` — reply
 - `R` — multiline reply
-- `Space` — open/download media on selected message
 - `Esc` — back to chat list
 - `/` — fuzzy search popup
 

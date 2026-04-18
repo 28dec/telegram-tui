@@ -14,14 +14,16 @@ import (
 
 // Model is the chat message view sub-model.
 type Model struct {
-	viewport  viewport.Model
-	messages  []apptg.ChatMessage
-	cursor    int // index into messages; -1 = none
-	peerTitle string
-	selfID    int64
-	width     int
-	height    int
-	loading   bool
+	viewport   viewport.Model
+	messages   []apptg.ChatMessage
+	cursor     int // index into messages; -1 = none
+	peerTitle  string
+	selfID     int64
+	width      int
+	height     int
+	loading    bool
+	lineStarts []int // rendered line start per message
+	lineEnds   []int // rendered line end (exclusive) per message
 }
 
 // New creates a new chat view.
@@ -102,6 +104,7 @@ func (m *Model) PrependMessages(msgs []apptg.ChatMessage) {
 	// Shift cursor by the number of prepended messages.
 	m.cursor += len(msgs)
 	m.messages = append(msgs, m.messages...)
+	m.clampCursor()
 	m.renderContent()
 }
 
@@ -109,6 +112,19 @@ func (m *Model) PrependMessages(msgs []apptg.ChatMessage) {
 func (m *Model) SetPeer(title string) {
 	m.peerTitle = title
 	m.loading = true
+}
+
+func (m *Model) clampCursor() {
+	if len(m.messages) == 0 {
+		m.cursor = -1
+		return
+	}
+	if m.cursor < 0 {
+		m.cursor = 0
+	}
+	if m.cursor >= len(m.messages) {
+		m.cursor = len(m.messages) - 1
+	}
 }
 
 // AtTop returns true if the viewport is scrolled to the top (triggers pagination).
@@ -124,12 +140,7 @@ func (m *Model) MoveCursor(delta int) bool {
 		return false
 	}
 	m.cursor += delta
-	if m.cursor < 0 {
-		m.cursor = 0
-	}
-	if m.cursor >= len(m.messages) {
-		m.cursor = len(m.messages) - 1
-	}
+	m.clampCursor()
 	m.renderContent()
 	m.scrollToCursor()
 	return m.cursor == 0
@@ -137,49 +148,30 @@ func (m *Model) MoveCursor(delta int) bool {
 
 // scrollToCursor scrolls the viewport so the cursor message is fully visible.
 func (m *Model) scrollToCursor() {
-	if m.cursor < 0 || len(m.messages) == 0 {
+	if m.cursor < 0 || m.cursor >= len(m.messages) {
+		return
+	}
+	if m.cursor >= len(m.lineStarts) || m.cursor >= len(m.lineEnds) {
 		return
 	}
 	vpHeight := m.viewport.Height()
-	total := m.viewport.TotalLineCount()
-	if total == 0 {
+	if vpHeight <= 0 {
 		return
 	}
 
-	// Calculate the first line of the cursor message.
-	cursorStart := m.linesBeforeIndex(m.cursor)
-	cursorEnd := cursorStart + m.messageHeight(m.messages[m.cursor])
+	cursorStart := m.lineStarts[m.cursor]
+	cursorEnd := m.lineEnds[m.cursor]
 
-	// Current visible window.
-	visibleTop := int(m.viewport.ScrollPercent() * float64(total-vpHeight+1))
+	visibleTop := m.viewport.YOffset()
 	visibleBottom := visibleTop + vpHeight
 
 	if cursorStart < visibleTop {
-		// Cursor is above: scroll up so cursor is at the top.
-		m.viewport.ScrollUp(visibleTop - cursorStart)
-	} else if cursorEnd > visibleBottom {
-		// Cursor bottom is below: scroll down so cursor bottom aligns with viewport bottom.
-		m.viewport.ScrollDown(cursorEnd - visibleBottom)
+		m.viewport.SetYOffset(cursorStart)
+		return
 	}
-}
-
-// linesBeforeIndex counts rendered lines before message at index i,
-// including date separators.
-func (m *Model) linesBeforeIndex(idx int) int {
-	lines := 0
-	var prevDate time.Time
-	for i, msg := range m.messages {
-		if i >= idx {
-			break
-		}
-		if !sameDay(prevDate, msg.Date) {
-			prevDate = msg.Date
-			lines++
-		}
-		lines += m.messageHeight(msg)
-		lines += messageGapLines
+	if cursorEnd > visibleBottom {
+		m.viewport.SetYOffset(cursorEnd - vpHeight)
 	}
-	return lines
 }
 
 // LoadedCount returns number of currently loaded messages.
@@ -192,22 +184,6 @@ func (m Model) OldestMessageID() int {
 		return 0
 	}
 	return m.messages[0].ID
-}
-
-// messageHeight returns how many terminal lines a message occupies, excluding
-// inter-message gap lines.
-func (m *Model) messageHeight(msg apptg.ChatMessage) int {
-	lines := 1 // header
-	if msg.ReplyToID != nil {
-		lines++ // reply indicator line
-	}
-	body := msg.Text
-	if body == "" {
-		lines++ // placeholder or blank
-	} else {
-		lines += len(strings.Split(body, "\n"))
-	}
-	return lines
 }
 
 // CursorMedia returns the media of the cursor message, or nil.
@@ -256,16 +232,23 @@ func (m *Model) MarkReadThrough(maxID int) int {
 
 // renderContent re-renders all messages into the viewport.
 func (m *Model) renderContent() {
+	m.clampCursor()
 	m.viewport.SetContent(m.buildContent())
 }
 
 func (m *Model) buildContent() string {
 	if len(m.messages) == 0 {
+		m.lineStarts = nil
+		m.lineEnds = nil
 		return loadingStyle.Render("  No messages yet.")
 	}
 
+	m.lineStarts = make([]int, 0, len(m.messages))
+	m.lineEnds = make([]int, 0, len(m.messages))
+
 	var sb strings.Builder
 	var prevDate time.Time
+	lineNo := 0
 
 	for i, msg := range m.messages {
 		// Date separator when the day changes.
@@ -274,12 +257,20 @@ func (m *Model) buildContent() string {
 			sep := m.renderDateSeparator(msg.Date)
 			sb.WriteString(sep)
 			sb.WriteString("\n")
+			lineNo += maxInt(1, lipgloss.Height(sep))
 		}
 
-		sb.WriteString(m.renderMessage(msg, i == m.cursor))
+		rendered := m.renderMessage(msg, i == m.cursor)
+		h := maxInt(1, lipgloss.Height(rendered))
+		m.lineStarts = append(m.lineStarts, lineNo)
+		m.lineEnds = append(m.lineEnds, lineNo+h)
+
+		sb.WriteString(rendered)
 		sb.WriteString("\n")
+		lineNo += h
 		if i < len(m.messages)-1 {
 			sb.WriteString(strings.Repeat("\n", messageGapLines))
+			lineNo += messageGapLines
 		}
 	}
 
@@ -300,7 +291,7 @@ func (m *Model) renderMessage(msg apptg.ChatMessage, isCursor bool) string {
 			unread = " ●"
 		}
 		if msg.Media != nil {
-			mediaHint = " [Space]"
+			mediaHint = mediaTagStyle.Render(" [Media]")
 		}
 		if msg.EditDate != nil {
 			edited = " (edited)"
@@ -470,18 +461,36 @@ func (m *Model) formatReplyLine(replyToID int, indent string, isCursor bool) str
 }
 
 func formatMediaPlaceholder(media *apptg.MediaInfo) string {
+	if media == nil {
+		return ""
+	}
+	kind := "Media"
+	detail := media.FileName
 	switch media.Type {
 	case apptg.MediaPhoto:
-		return "📷 Photo"
+		kind = "Photo"
 	case apptg.MediaVideo:
-		return "🎥 Video: " + media.FileName
+		kind = "Video"
 	case apptg.MediaAudio:
-		return "🎵 Audio: " + media.FileName
+		kind = "Audio"
 	case apptg.MediaDocument:
-		return "📎 Document: " + media.FileName
+		kind = "Document"
 	default:
-		return "📎 Media"
+		if media.Alt != "" || strings.EqualFold(media.FileName, "sticker") {
+			kind = "Sticker"
+			detail = media.Alt
+		}
 	}
+	if detail == "" {
+		detail = media.Caption
+	}
+	if detail == "" {
+		detail = "(no description)"
+	}
+	if media.Caption != "" && media.Caption != detail {
+		return "[" + kind + "] " + detail + " — " + media.Caption
+	}
+	return "[" + kind + "] " + detail
 }
 
 func sameDay(a, b time.Time) bool {
@@ -530,7 +539,11 @@ var (
 
 	mediaHintStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#98C379")).
-			Italic(true)
+			Bold(true)
+
+	mediaTagStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#98C379")).
+			Bold(true)
 
 	replyStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#AAB2C0")).

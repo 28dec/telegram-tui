@@ -43,9 +43,10 @@ type Model struct {
 	activeReadInboxMaxID int
 
 	// Startup/auth splash state.
-	startupStatus  string
-	showAuthPrompt bool
-	pendingReady   *apptg.TelegramReadyMsg
+	startupStatus   string
+	showAuthPrompt  bool
+	readyReceivedAt *time.Time
+	startupSpinner  int
 
 	// Telegram state
 	program  *tea.Program
@@ -87,6 +88,8 @@ func (m *Model) Init() tea.Cmd {
 	return tea.Batch(
 		m.authInput.Focus(),
 		apptg.StartTelegram(m.program, m.tuiAuth),
+		startupSpinnerTickCmd(),
+		startupTickCmd(),
 	)
 }
 
@@ -110,6 +113,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case apptg.AuthPromptMsg:
 		m.showAuthPrompt = true
+		m.readyReceivedAt = nil
 		switch msg.Kind {
 		case apptg.AuthPromptPhone:
 			m.authState = AuthPhone
@@ -129,34 +133,41 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case apptg.TelegramReadyMsg:
 		m.showAuthPrompt = false
-		m.startupStatus = "Connected. Opening in 3 seconds…"
-		ready := msg
-		m.pendingReady = &ready
-		return m, tea.Tick(3*time.Second, func(time.Time) tea.Msg { return StartupContinueMsg{} })
-
-	case StartupContinueMsg:
-		if m.pendingReady == nil {
-			return m, nil
-		}
-		ready := *m.pendingReady
-		m.pendingReady = nil
-		m.selfID = ready.Self.GetID()
-		username, _ := ready.Self.GetUsername()
+		now := time.Now()
+		m.readyReceivedAt = &now
+		m.startupStatus = "Connected. Preparing workspace…"
+		m.selfID = msg.Self.GetID()
+		username, _ := msg.Self.GetUsername()
 		if username == "" {
 			username = fmt.Sprintf("%d", m.selfID)
 		}
 		m.selfName = username
-		m.api = ready.API
-		m.tgClient = ready.Client
-		m.authState = AuthDone
-		m.mode = ModeNormal
-		m.showAuthPrompt = false
-		m.activeView = ViewChannelList
-		bodyHeight := m.contentHeight()
-		m.chatView = chatview.New(m.width, bodyHeight, m.selfID)
-		m.msgInput = input.New(m.width)
-		m.mediaViewer = media.New(m.width, m.height)
-		return m, apptg.FetchDialogs(m.api)
+		m.api = msg.API
+		m.tgClient = msg.Client
+		return m, nil
+
+	case StartupTickMsg:
+		if m.mode == ModeAuth && !m.showAuthPrompt && m.readyReceivedAt != nil {
+			if time.Since(*m.readyReceivedAt) >= 3*time.Second {
+				m.authState = AuthDone
+				m.mode = ModeNormal
+				m.activeView = ViewChannelList
+				bodyHeight := m.contentHeight()
+				m.chatView = chatview.New(m.width, bodyHeight, m.selfID)
+				m.msgInput = input.New(m.width)
+				m.mediaViewer = media.New(m.width, m.height)
+				m.readyReceivedAt = nil
+				return m, apptg.FetchDialogs(m.api)
+			}
+		}
+		return m, startupTickCmd()
+
+	case StartupSpinnerMsg:
+		if m.mode == ModeAuth && !m.showAuthPrompt {
+			m.startupSpinner = (m.startupSpinner + 1) % len(startupSpinnerFrames)
+			return m, startupSpinnerTickCmd()
+		}
+		return m, nil
 
 	case apptg.TelegramErrorMsg:
 		m.err = msg.Err
@@ -509,12 +520,6 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				m.channelList.SetReadInboxMax(activePeerID(m.activePeer), m.activeReadInboxMaxID)
 			}
 			m.activeView = ViewChannelList
-		case " ":
-			if info := m.chatView.CursorMedia(); info != nil && m.activePeer != nil {
-				m.mediaViewer.Open(info)
-				m.mode = ModeMedia
-				return m, apptg.DownloadMedia(m.tgClient, info, *m.activePeer)
-			}
 		case "i":
 			cmd := m.msgInput.Activate(input.Inline, nil, m.width)
 			m.mode = ModeInput
@@ -621,37 +626,48 @@ func (m *Model) View() tea.View {
 }
 
 func (m *Model) authView() string {
+	center := lipgloss.NewStyle().Width(maxInt(1, m.width)).Align(lipgloss.Center)
+	artLines := strings.Split(strings.TrimSpace(telegramSplashASCII), "\n")
+	status := m.startupStatus
+	if status == "" {
+		status = "Starting…"
+	}
+
+	var lines []string
+	for _, line := range artLines {
+		lines = append(lines, center.Render(splashTitleStyle.Render(line)))
+	}
+	lines = append(lines, "")
+
 	if !m.showAuthPrompt {
-		art := strings.TrimSpace(telegramSplashASCII)
-		status := m.startupStatus
-		if status == "" {
-			status = "Starting…"
-		}
-		body := splashTitleStyle.Render(art) + "\n\n" +
-			labelStyle.Render("  "+status) + "\n\n" +
-			hintStyle.Render("  Checking internet/session in background…")
+		spinner := startupSpinnerFrames[m.startupSpinner%len(startupSpinnerFrames)]
+		lines = append(lines, center.Render(statusStyle.Render(spinner+"  "+status)))
+		lines = append(lines, center.Render(hintStyle.Render("Background checks are running…")))
+		body := strings.Join(lines, "\n")
 		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, body)
 	}
 
-	var sb strings.Builder
-	sb.WriteString("\n")
-	sb.WriteString(splashTitleStyle.Render(strings.TrimSpace(telegramSplashASCII)))
-	sb.WriteString("\n\n")
-	sb.WriteString(labelStyle.Render("  " + m.startupStatus))
-	sb.WriteString("\n\n")
+	var prompt string
 	switch m.authState {
 	case AuthPhone:
-		sb.WriteString(labelStyle.Render("  Enter your phone number:"))
+		prompt = "Enter your phone number"
 	case AuthCode:
-		sb.WriteString(labelStyle.Render("  Enter the verification code:"))
+		prompt = "Enter verification code"
 	case AuthPassword:
-		sb.WriteString(labelStyle.Render("  Enter your 2FA password (or press Enter to skip):"))
+		prompt = "Enter 2FA password (or press Enter to skip)"
+	default:
+		prompt = "Authentication"
 	}
-	sb.WriteString("\n  ")
-	sb.WriteString(m.authInput.View())
-	sb.WriteString("\n\n")
-	sb.WriteString(hintStyle.Render("  Press Enter to confirm • Ctrl+C to quit"))
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, sb.String())
+
+	lines = append(lines, center.Render(statusStyle.Render(status)))
+	lines = append(lines, "")
+	lines = append(lines, center.Render(inputPromptStyle.Render(prompt)))
+	lines = append(lines, center.Render(m.authInput.View()))
+	lines = append(lines, "")
+	lines = append(lines, center.Render(hintStyle.Render("Press Enter to confirm • Ctrl+C to quit")))
+
+	body := strings.Join(lines, "\n")
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, body)
 }
 
 func (m *Model) renderHeader() string {
@@ -682,29 +698,6 @@ func (m *Model) renderHeader() string {
 
 	content := truncateForHeader(line1, m.width-2) + "\n" + truncateForHeader(line2, m.width-2)
 	return headerBarStyle.Width(m.width).Align(lipgloss.Center).Render(content)
-}
-
-func modeLabel(mode Mode) string {
-	switch mode {
-	case ModeAuth:
-		return "AUTH"
-	case ModeNormal:
-		return "NORMAL"
-	case ModeInput:
-		return "INSERT"
-	case ModeInputMultiline:
-		return "INSERT(ML)"
-	case ModeReply:
-		return "REPLY"
-	case ModeReplyMultiline:
-		return "REPLY(ML)"
-	case ModeSearch:
-		return "SEARCH"
-	case ModeMedia:
-		return "MEDIA"
-	default:
-		return "UNKNOWN"
-	}
 }
 
 func oneLine(s string) string {
@@ -762,7 +755,7 @@ func (m *Model) renderFooter() string {
 	case ViewChannelList:
 		guide = "j/k: move • J/K: jump • a: archived/main • Enter: open • /: search • Ctrl+C: quit"
 	case ViewChat:
-		guide = "j/k: scroll • i/I: message • r/R: reply • Space: media • /: search • Esc: back • Ctrl+C: quit"
+		guide = "j/k: scroll • i/I: message • r/R: reply • /: search • Esc: back • Ctrl+C: quit"
 	default:
 		guide = "Ctrl+C: quit"
 	}
@@ -831,7 +824,7 @@ const telegramSplashASCII = `
    ██║   ███████╗███████╗███████╗╚██████╔╝██║  ██║██║  ██║██║ ╚═╝ ██║
    ╚═╝   ╚══════╝╚══════╝╚══════╝ ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝     ╚═╝
 
-                    T E R M I N A L   U I
+T E R M I N A L   U I
 `
 
 var (
@@ -849,6 +842,14 @@ var (
 	hintStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#5C6370")).
 			Italic(true)
+
+	statusStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#D7DCE5")).
+			Bold(true)
+
+	inputPromptStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#ABB2BF")).
+				Bold(true)
 
 	errorStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#E06C75")).
@@ -942,6 +943,30 @@ func extractSentMessage(u gotdtg.UpdatesClass) (id int, date time.Time) {
 		}
 	}
 	return
+}
+
+var startupSpinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+
+func startupTickCmd() tea.Cmd {
+	return tea.Tick(100*time.Millisecond, func(time.Time) tea.Msg { return StartupTickMsg{} })
+}
+
+func startupSpinnerTickCmd() tea.Cmd {
+	return tea.Tick(120*time.Millisecond, func(time.Time) tea.Msg { return StartupSpinnerMsg{} })
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // openExternalCmd returns a tea.Cmd that opens a file in the system viewer.

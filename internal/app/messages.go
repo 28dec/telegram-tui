@@ -57,5 +57,8 @@ type MediaDownloadedMsg struct {
 	Info apptg.MediaInfo
 }
 
-// StartupContinueMsg is sent after splash delay before entering main UI.
-type StartupContinueMsg struct{}
+// StartupTickMsg advances splash spinner/progress during startup.
+type StartupTickMsg struct{}
+
+// StartupSpinnerMsg advances spinner frame while startup splash is shown.
+type StartupSpinnerMsg struct{}

@@ -178,7 +178,7 @@ func parseHistory(raw gotdtg.MessagesMessagesClass, selfID int64, readInboxMaxID
 
 		// Media.
 		if media, ok := m.GetMedia(); ok {
-			cm.Media = extractMedia(media, m.GetID())
+			cm.Media = extractMedia(media, m.GetID(), m.GetMessage())
 		}
 
 		out = append(out, cm)
@@ -193,8 +193,8 @@ func parseHistory(raw gotdtg.MessagesMessagesClass, selfID int64, readInboxMaxID
 	return out, userNames, hasMore
 }
 
-func extractMedia(media gotdtg.MessageMediaClass, msgID int) *MediaInfo {
-	info := &MediaInfo{MessageID: msgID}
+func extractMedia(media gotdtg.MessageMediaClass, msgID int, caption string) *MediaInfo {
+	info := &MediaInfo{MessageID: msgID, Caption: caption}
 	switch m := media.(type) {
 	case *gotdtg.MessageMediaPhoto:
 		info.Type = MediaPhoto
@@ -214,6 +214,13 @@ func extractMedia(media gotdtg.MessageMediaClass, msgID int) *MediaInfo {
 					}
 					if _, ok := attr.(*gotdtg.DocumentAttributeAudio); ok {
 						info.Type = MediaAudio
+					}
+					if st, ok := attr.(*gotdtg.DocumentAttributeSticker); ok {
+						info.Type = MediaOther
+						info.Alt = st.GetAlt()
+						if info.FileName == "" {
+							info.FileName = "sticker"
+						}
 					}
 				}
 				if info.FileName == "" {
