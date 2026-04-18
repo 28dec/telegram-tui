@@ -4,6 +4,10 @@ A fast, keyboard-first Telegram client for the terminal, written in Go.
 
 `telegram-tui` is designed around a Vim-like workflow and a stable asynchronous UI: browse chats, jump into conversations, search with `/`, read media, and send messages without leaving your terminal.
 
+## UI Preview
+
+![telegram-tui UI preview](./SCR-20260418-pexg.png)
+
 ---
 
 ## Features
