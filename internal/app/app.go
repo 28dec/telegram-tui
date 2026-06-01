@@ -191,7 +191,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.chatView.SetMessages(msg.Messages)
 		}
-		return m, m.markCursorRead()
+		return m, nil
 
 	case apptg.FetchHistoryErrMsg:
 		m.err = msg.Err
@@ -505,16 +505,16 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "j":
 			m.chatView.MoveCursor(1)
-			return m, m.markCursorRead()
+			return m, m.markChatRead()
 		case "k":
 			_, cmd := m.moveCursorUp(1)
-			return m, tea.Batch(cmd, m.markCursorRead())
+			return m, tea.Batch(cmd, m.markChatRead())
 		case "J":
 			m.chatView.MoveCursor(10)
-			return m, m.markCursorRead()
+			return m, m.markChatRead()
 		case "K":
 			_, cmd := m.moveCursorUp(10)
-			return m, tea.Batch(cmd, m.markCursorRead())
+			return m, tea.Batch(cmd, m.markChatRead())
 		case "esc":
 			if m.activePeer != nil && m.activeReadInboxMaxID > 0 {
 				m.channelList.SetReadInboxMax(activePeerID(m.activePeer), m.activeReadInboxMaxID)
@@ -877,26 +877,24 @@ var (
 			PaddingRight(1)
 )
 
-func (m *Model) markCursorRead() tea.Cmd {
+// markChatRead marks messages up to the cursor as read locally and tells the
+// server to advance its read-inbox marker. The channel list badge is left alone
+// here — it updates when the server echoes back an UpdateReadHistoryInbox /
+// UpdateReadChannelInbox with the real remaining count.
+func (m *Model) markChatRead() tea.Cmd {
 	if m.activePeer == nil {
 		return nil
 	}
 	cursorMsg, ok := m.chatView.CursorMessage()
-	if !ok || !cursorMsg.Unread || cursorMsg.Out {
+	if !ok {
+		return nil
+	}
+	if cursorMsg.ID <= m.activeReadInboxMaxID {
 		return nil
 	}
 
-	changed := m.chatView.MarkReadThrough(cursorMsg.ID)
-	if changed <= 0 {
-		return nil
-	}
-
-	peerID := activePeerID(m.activePeer)
-	m.channelList.ConsumeUnread(peerID, changed)
-	if cursorMsg.ID > m.activeReadInboxMaxID {
-		m.activeReadInboxMaxID = cursorMsg.ID
-	}
-	m.channelList.SetReadInboxMax(peerID, m.activeReadInboxMaxID)
+	m.chatView.MarkReadThrough(cursorMsg.ID)
+	m.activeReadInboxMaxID = cursorMsg.ID
 	return apptg.ReadHistory(m.api, *m.activePeer, cursorMsg.ID)
 }
 

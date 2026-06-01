@@ -18,15 +18,13 @@ func StartTelegram(program *tea.Program, tuiAuth *TUIAuth) tea.Cmd {
 			program.Send(StartupStatusMsg{Text: "Checking internet connection…"})
 		}
 
-		client, err := telegram.ClientFromEnvironment(telegram.Options{
+		// Credentials from https://github.com/paul-nameless/tg
+		client := telegram.NewClient(559815, "fd121358f59d764c57c55871aa0807ca", telegram.Options{
 			UpdateHandler: bridge,
 		})
-		if err != nil {
-			return TelegramErrorMsg{Err: err}
-		}
 
 		ctx := context.Background()
-		err = client.Run(ctx, func(ctx context.Context) error {
+		err := client.Run(ctx, func(ctx context.Context) error {
 			if program != nil {
 				program.Send(StartupStatusMsg{Text: "Checking session…"})
 			}

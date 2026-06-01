@@ -186,6 +186,15 @@ func (m Model) OldestMessageID() int {
 	return m.messages[0].ID
 }
 
+// NewestMessageID returns the ID of the newest loaded message.
+// Returns 0 if no messages are loaded.
+func (m Model) NewestMessageID() int {
+	if len(m.messages) == 0 {
+		return 0
+	}
+	return m.messages[len(m.messages)-1].ID
+}
+
 // CursorMedia returns the media of the cursor message, or nil.
 func (m Model) CursorMedia() *apptg.MediaInfo {
 	if m.cursor < 0 || m.cursor >= len(m.messages) {

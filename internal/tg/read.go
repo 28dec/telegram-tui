@@ -16,10 +16,21 @@ func ReadHistory(api *gotdtg.Client, peer gotdtg.InputPeerClass, maxID int) tea.
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-		_, _ = api.MessagesReadHistory(ctx, &gotdtg.MessagesReadHistoryRequest{
-			Peer:  peer,
-			MaxID: maxID,
-		})
+		switch p := peer.(type) {
+		case *gotdtg.InputPeerChannel:
+			_, _ = api.ChannelsReadHistory(ctx, &gotdtg.ChannelsReadHistoryRequest{
+				Channel: &gotdtg.InputChannel{
+					ChannelID:  p.ChannelID,
+					AccessHash: p.AccessHash,
+				},
+				MaxID: maxID,
+			})
+		default:
+			_, _ = api.MessagesReadHistory(ctx, &gotdtg.MessagesReadHistoryRequest{
+				Peer:  peer,
+				MaxID: maxID,
+			})
+		}
 		return nil
 	}
 }
