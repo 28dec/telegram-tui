@@ -86,7 +86,6 @@ func (m *Model) SetProgram(p *tea.Program) {
 // Init starts Telegram in the background.
 func (m *Model) Init() tea.Cmd {
 	return tea.Batch(
-		m.authInput.Focus(),
 		apptg.StartTelegram(m.program, m.tuiAuth),
 		startupSpinnerTickCmd(),
 		startupTickCmd(),
@@ -117,15 +116,18 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.Kind {
 		case apptg.AuthPromptPhone:
 			m.authState = AuthPhone
-			m.authInput.Placeholder = "Phone number (e.g. +14155550100)"
+			m.authInput.Placeholder = "Phone number (e.g. +84901234567)"
+			m.authInput.EchoMode = textinput.EchoNormal
 			m.startupStatus = "Login required: enter phone number"
 		case apptg.AuthPromptCode:
 			m.authState = AuthCode
 			m.authInput.Placeholder = "Verification code"
+			m.authInput.EchoMode = textinput.EchoNormal
 			m.startupStatus = "Enter verification code"
 		case apptg.AuthPromptPassword:
 			m.authState = AuthPassword
 			m.authInput.Placeholder = "2FA password (Enter to skip if none)"
+			m.authInput.EchoMode = textinput.EchoPassword
 			m.startupStatus = "Enter 2FA password"
 		}
 		m.authInput.Reset()
@@ -650,7 +652,7 @@ func (m *Model) authView() string {
 	var prompt string
 	switch m.authState {
 	case AuthPhone:
-		prompt = "Enter your phone number"
+		prompt = "Enter your phone number in international format (e.g. +84901234567)"
 	case AuthCode:
 		prompt = "Enter verification code"
 	case AuthPassword:
@@ -893,8 +895,12 @@ func (m *Model) markChatRead() tea.Cmd {
 		return nil
 	}
 
-	m.chatView.MarkReadThrough(cursorMsg.ID)
+	changed := m.chatView.MarkReadThrough(cursorMsg.ID)
 	m.activeReadInboxMaxID = cursorMsg.ID
+	if changed > 0 {
+		peerID := activePeerID(m.activePeer)
+		m.channelList.ConsumeUnread(peerID, changed)
+	}
 	return apptg.ReadHistory(m.api, *m.activePeer, cursorMsg.ID)
 }
 

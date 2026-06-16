@@ -2,6 +2,8 @@ package tg
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/gotd/td/telegram"
@@ -19,8 +21,12 @@ func StartTelegram(program *tea.Program, tuiAuth *TUIAuth) tea.Cmd {
 		}
 
 		// Credentials from https://github.com/paul-nameless/tg
+		sessionDir, _ := os.UserHomeDir()
+		sessionPath := filepath.Join(sessionDir, ".telegram-tui-session.json")
+
 		client := telegram.NewClient(559815, "fd121358f59d764c57c55871aa0807ca", telegram.Options{
-			UpdateHandler: bridge,
+			UpdateHandler:  bridge,
+			SessionStorage: &telegram.FileSessionStorage{Path: sessionPath},
 		})
 
 		ctx := context.Background()
