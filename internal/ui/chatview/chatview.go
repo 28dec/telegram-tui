@@ -8,8 +8,8 @@ import (
 	"charm.land/bubbles/v2/viewport"
 	"charm.land/lipgloss/v2"
 
-	apptg "github.com/dxlongnh/telegram-tui/internal/tg"
-	"github.com/dxlongnh/telegram-tui/internal/ui/style"
+	apptg "github.com/28dec/telegram-tui/internal/tg"
+	"github.com/28dec/telegram-tui/internal/ui/style"
 )
 
 // Model is the chat message view sub-model.
@@ -24,6 +24,10 @@ type Model struct {
 	loading    bool
 	lineStarts []int // rendered line start per message
 	lineEnds   []int // rendered line end (exclusive) per message
+
+	// Expand popup state
+	popupOpen     bool
+	popupViewport viewport.Model
 }
 
 // New creates a new chat view.
@@ -144,6 +148,75 @@ func (m *Model) MoveCursor(delta int) bool {
 	m.renderContent()
 	m.scrollToCursor()
 	return m.cursor == 0
+}
+
+// OpenPopup opens an overlay popup showing the full cursor message.
+func (m *Model) OpenPopup() {
+	if m.cursor < 0 || m.cursor >= len(m.messages) {
+		return
+	}
+	msg := m.messages[m.cursor]
+	popupWidth := maxInt(20, m.width-6)
+	popupHeight := maxInt(5, m.height-4)
+
+	fullText := m.buildPopupContent(msg, popupWidth-4) // -4 for border+padding
+	m.popupViewport = viewport.New(
+		viewport.WithWidth(popupWidth-2),
+		viewport.WithHeight(popupHeight-2),
+	)
+	m.popupViewport.SetContent(fullText)
+	m.popupOpen = true
+}
+
+// ClosePopup closes the expand popup.
+func (m *Model) ClosePopup() {
+	m.popupOpen = false
+}
+
+// IsPopupOpen returns whether the expand popup is currently shown.
+func (m Model) IsPopupOpen() bool {
+	return m.popupOpen
+}
+
+// ScrollPopup scrolls the popup viewport by delta lines.
+func (m *Model) ScrollPopup(delta int) {
+	if !m.popupOpen {
+		return
+	}
+	m.popupViewport.SetYOffset(m.popupViewport.YOffset() + delta)
+}
+
+// PopupView renders the popup overlay.
+func (m Model) PopupView() string {
+	border := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("#61AFEF")).
+		Width(maxInt(20, m.width-6)).
+		Height(maxInt(5, m.height-4))
+	return border.Render(m.popupViewport.View())
+}
+
+func (m Model) buildPopupContent(msg apptg.ChatMessage, wrapWidth int) string {
+	var sb strings.Builder
+	header := fmt.Sprintf("%s  %s", msg.FromName, msg.Date.Local().Format("2006-01-02 15:04"))
+	if msg.EditDate != nil {
+		header += " (edited)"
+	}
+	sb.WriteString(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#61AFEF")).Render(header))
+	sb.WriteString("\n")
+	sb.WriteString(strings.Repeat("─", maxInt(1, wrapWidth)))
+	sb.WriteString("\n\n")
+
+	if msg.Media != nil {
+		sb.WriteString(formatMediaPlaceholder(msg.Media))
+		sb.WriteString("\n")
+	}
+	if msg.Text != "" {
+		sb.WriteString(msg.Text)
+	}
+	sb.WriteString("\n\n")
+	sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("#5C6370")).Italic(true).Render("j/k: scroll • Esc/Enter: close"))
+	return sb.String()
 }
 
 // scrollToCursor scrolls the viewport so the cursor message is fully visible.
@@ -327,16 +400,25 @@ func (m *Model) renderMessage(msg apptg.ChatMessage, isCursor bool) string {
 	}
 
 	// Line 2+: message body (always at least one line)
-	body := msg.Text
-	if body == "" {
-		if msg.Media != nil {
-			body = formatMediaPlaceholder(msg.Media)
-		} else {
-			body = "\u200b" // zero-width space keeps the line present
+	var body string
+	if msg.Media != nil {
+		body = formatMediaPlaceholder(msg.Media)
+		if msg.Text != "" && msg.Text != msg.Media.Caption {
+			body += "\n" + bodyIndent + msg.Text
 		}
+	} else if msg.Text != "" {
+		body = msg.Text
+	} else {
+		body = "\u200b"
 	}
 
 	bodyLines := strings.Split(body, "\n")
+	maxCollapsedLines := maxInt(3, m.height*4/5)
+	truncated := false
+	if len(bodyLines) > maxCollapsedLines {
+		truncated = true
+		bodyLines = bodyLines[:maxCollapsedLines]
+	}
 	var bodyBuilder strings.Builder
 	for i, line := range bodyLines {
 		if i > 0 {
@@ -344,6 +426,15 @@ func (m *Model) renderMessage(msg apptg.ChatMessage, isCursor bool) string {
 		}
 		bodyBuilder.WriteString(bodyIndent)
 		bodyBuilder.WriteString(line)
+	}
+	if truncated {
+		remaining := strings.Count(body, "\n") + 1 - maxCollapsedLines
+		hint := fmt.Sprintf("\n%s... (%d more lines, Enter to expand)", bodyIndent, remaining)
+		if isCursor {
+			bodyBuilder.WriteString(hint)
+		} else {
+			bodyBuilder.WriteString(truncatedHintStyle.Render(hint))
+		}
 	}
 	bodyBuilder.WriteString(edited)
 
@@ -473,33 +564,36 @@ func formatMediaPlaceholder(media *apptg.MediaInfo) string {
 	if media == nil {
 		return ""
 	}
+	icon := "📎"
 	kind := "Media"
-	detail := media.FileName
 	switch media.Type {
 	case apptg.MediaPhoto:
+		icon = "📷"
 		kind = "Photo"
 	case apptg.MediaVideo:
+		icon = "🎬"
 		kind = "Video"
 	case apptg.MediaAudio:
+		icon = "🎵"
 		kind = "Audio"
 	case apptg.MediaDocument:
+		icon = "📄"
 		kind = "Document"
 	default:
 		if media.Alt != "" || strings.EqualFold(media.FileName, "sticker") {
+			icon = "🏷"
 			kind = "Sticker"
-			detail = media.Alt
 		}
 	}
-	if detail == "" {
-		detail = media.Caption
+
+	label := icon + " " + kind
+	if media.Caption != "" {
+		return label + "\n" + media.Caption
 	}
-	if detail == "" {
-		detail = "(no description)"
+	if media.FileName != "" && media.FileName != strings.ToLower(kind) {
+		return label + " — " + media.FileName
 	}
-	if media.Caption != "" && media.Caption != detail {
-		return "[" + kind + "] " + detail + " — " + media.Caption
-	}
-	return "[" + kind + "] " + detail
+	return label
 }
 
 func sameDay(a, b time.Time) bool {
@@ -557,4 +651,8 @@ var (
 	replyStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#AAB2C0")).
 			Bold(true)
+
+	truncatedHintStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#5C6370")).
+				Italic(true)
 )

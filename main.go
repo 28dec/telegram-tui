@@ -6,8 +6,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/dxlongnh/telegram-tui/internal/app"
-	apptg "github.com/dxlongnh/telegram-tui/internal/tg"
+	"github.com/28dec/telegram-tui/internal/app"
+	apptg "github.com/28dec/telegram-tui/internal/tg"
 )
 
 func main() {

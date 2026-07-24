@@ -58,26 +58,25 @@ A fast, keyboard-first Telegram client for the terminal, written in Go.
 - Go **1.25+**
 - Telegram API credentials (`APP_ID`, `APP_HASH`)
 
-Get credentials from: https://my.telegram.org → API development tools.
-
 ---
 
-## Quick start
+## Install
 
-### 1) Clone
+Requires Go **1.25+** and `$(go env GOPATH)/bin` on your `PATH`.
 
 ```bash
-git clone <your-repo-url>
-cd telegram-tui
+go install github.com/28dec/telegram-tui@latest
+telegram-tui
 ```
 
-### 2) Configure environment
+### Configure environment
 
 ```bash
+# if developing from a clone:
 cp .env.example .env
 ```
 
-Edit `.env`:
+Edit `.env` (or export these vars):
 
 ```env
 APP_ID=your_app_id_here
@@ -85,17 +84,15 @@ APP_HASH=your_app_hash_here
 # SESSION_FILE=/path/to/custom/session.json
 ```
 
-### 3) Run
+Get credentials from: https://my.telegram.org → API development tools.
+
+### Local development
 
 ```bash
-go run ./cmd/telegram-tui
-```
-
-Or build binary:
-
-```bash
-go build -o telegram-tui ./cmd/telegram-tui
-./telegram-tui
+git clone https://github.com/28dec/telegram-tui.git
+cd telegram-tui
+go run .
+# or: go build -o telegram-tui . && ./telegram-tui
 ```
 
 On first run, log in with phone/code (and 2FA password if enabled).
@@ -132,7 +129,7 @@ On first run, log in with phone/code (and 2FA password if enabled).
 ## Project structure
 
 ```text
-cmd/telegram-tui/main.go   # app entrypoint
+main.go                    # app entrypoint
 internal/app/              # root Bubble Tea app model + routing
 internal/tg/               # Telegram API/auth/history/dialogs/media
 internal/ui/               # chat list, chat view, input, search, media components

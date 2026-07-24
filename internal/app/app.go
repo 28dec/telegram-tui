@@ -11,12 +11,12 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	apptg "github.com/dxlongnh/telegram-tui/internal/tg"
-	"github.com/dxlongnh/telegram-tui/internal/ui/channellist"
-	"github.com/dxlongnh/telegram-tui/internal/ui/chatview"
-	"github.com/dxlongnh/telegram-tui/internal/ui/input"
-	"github.com/dxlongnh/telegram-tui/internal/ui/media"
-	"github.com/dxlongnh/telegram-tui/internal/ui/search"
+	apptg "github.com/28dec/telegram-tui/internal/tg"
+	"github.com/28dec/telegram-tui/internal/ui/channellist"
+	"github.com/28dec/telegram-tui/internal/ui/chatview"
+	"github.com/28dec/telegram-tui/internal/ui/input"
+	"github.com/28dec/telegram-tui/internal/ui/media"
+	"github.com/28dec/telegram-tui/internal/ui/search"
 	"github.com/gotd/td/telegram"
 	gotdtg "github.com/gotd/td/tg"
 )
@@ -431,6 +431,8 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.handleSearchKey(msg)
 	case ModeMedia:
 		return m.handleMediaKey(msg)
+	case ModeExpandPopup:
+		return m.handleExpandPopupKey(msg)
 	}
 	return m, nil
 }
@@ -538,6 +540,10 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			cmd := m.msgInput.Activate(input.ReplyMulti, m.chatView.CursorMessageID(), m.width)
 			m.mode = ModeReplyMultiline
 			return m, cmd
+		case "enter":
+			m.chatView.OpenPopup()
+			m.mode = ModeExpandPopup
+			return m, nil
 		case "/":
 			cmd := m.searchPopup.Open(m.channelList.AllDialogs(), m.width, m.height)
 			m.mode = ModeSearch
@@ -578,6 +584,24 @@ func (m *Model) handleMediaKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			// Open in system viewer (macOS: open, Linux: xdg-open).
 			return m, openExternalCmd(path)
 		}
+	}
+	return m, nil
+}
+
+// handleExpandPopupKey handles keys while the expand popup is open.
+func (m *Model) handleExpandPopupKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "enter":
+		m.chatView.ClosePopup()
+		m.mode = ModeNormal
+	case "j":
+		m.chatView.ScrollPopup(1)
+	case "k":
+		m.chatView.ScrollPopup(-1)
+	case "J":
+		m.chatView.ScrollPopup(10)
+	case "K":
+		m.chatView.ScrollPopup(-10)
 	}
 	return m, nil
 }
@@ -757,7 +781,7 @@ func (m *Model) renderFooter() string {
 	case ViewChannelList:
 		guide = "j/k: move • J/K: jump • a: archived/main • Enter: open • /: search • Ctrl+C: quit"
 	case ViewChat:
-		guide = "j/k: scroll • i/I: message • r/R: reply • /: search • Esc: back • Ctrl+C: quit"
+		guide = "j/k: scroll • Enter: expand • i/I: message • r/R: reply • /: search • Esc: back • Ctrl+C: quit"
 	default:
 		guide = "Ctrl+C: quit"
 	}
@@ -808,6 +832,10 @@ func (m *Model) mainView() string {
 	case ViewChannelList:
 		return header + "\n" + m.channelList.View() + "\n" + footer
 	case ViewChat:
+		if m.mode == ModeExpandPopup && m.chatView.IsPopupOpen() {
+			popupContent := m.chatView.PopupView()
+			return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, popupContent)
+		}
 		inputArea := m.msgInput.View()
 		if !m.msgInput.Active() {
 			inputArea = lipgloss.NewStyle().Width(m.width).Render("")

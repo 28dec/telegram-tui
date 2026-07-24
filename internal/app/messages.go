@@ -1,7 +1,7 @@
 package app
 
 import (
-	apptg "github.com/dxlongnh/telegram-tui/internal/tg"
+	apptg "github.com/28dec/telegram-tui/internal/tg"
 )
 
 // Mode represents the current input/interaction mode.
@@ -16,6 +16,7 @@ const (
 	ModeReplyMultiline             // multiline reply input
 	ModeSearch                     // fuzzy search popup
 	ModeMedia                      // media viewer overlay
+	ModeExpandPopup                // expanded message popup
 )
 
 // ActiveView tracks which top-level view is shown.

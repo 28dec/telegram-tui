@@ -9,7 +9,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/sahilm/fuzzy"
 
-	apptg "github.com/dxlongnh/telegram-tui/internal/tg"
+	apptg "github.com/28dec/telegram-tui/internal/tg"
 )
 
 // ResultSelectedMsg is sent when the user picks a search result.

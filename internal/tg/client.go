@@ -2,6 +2,7 @@ package tg
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 
@@ -55,7 +56,7 @@ func StartTelegram(program *tea.Program, tuiAuth *TUIAuth) tea.Cmd {
 			return ctx.Err()
 		})
 
-		if err != nil && err != context.Canceled {
+		if err != nil && !errors.Is(err, context.Canceled) {
 			return TelegramErrorMsg{Err: err}
 		}
 		return nil

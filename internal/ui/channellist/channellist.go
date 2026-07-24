@@ -8,7 +8,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 
-	apptg "github.com/dxlongnh/telegram-tui/internal/tg"
+	apptg "github.com/28dec/telegram-tui/internal/tg"
 )
 
 // Model is the channel/group list sub-model.

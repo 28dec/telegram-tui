@@ -1,4 +1,4 @@
-module github.com/dxlongnh/telegram-tui
+module github.com/28dec/telegram-tui
 
 go 1.25.6
 
